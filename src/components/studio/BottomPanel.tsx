@@ -223,6 +223,7 @@ interface BottomPanelProps {
     format: ResultExportFormat,
     hydrated: AgentArtifactHydration | null,
     csvDelimiter?: CsvDelimiter,
+    selected?: { result: QueryResult; query: string },
   ) => void;
   /**
    * The same rows, in the same formats, onto the clipboard instead of into a file
@@ -237,6 +238,7 @@ interface BottomPanelProps {
     format: ResultExportFormat,
     hydrated: AgentArtifactHydration | null,
     csvDelimiter?: CsvDelimiter,
+    selected?: { result: QueryResult; query: string },
   ) => void;
   /**
    * A result an agent run stored, shown in the surface that already renders that
@@ -322,7 +324,58 @@ export const BottomPanel = React.memo(function BottomPanel({
     ((mode === "results" && hydratedResult !== null) ||
       (mode === "explain" && hydratedPlan !== null) ||
       (mode === "charts" && hydratedChart !== null));
-  const displayedResult = hydratedResult ?? result;
+
+  // Results from separate SQL statements.
+  type SqlStatementResult = {
+    index: number;
+    sql: string;
+    status: "success" | "error";
+    rows?: Record<string, unknown>[];
+    fields?: string[];
+    rowCount?: number;
+    executionTime: number;
+    columnTypes?: Record<string, string>;
+    warnings?: QueryResult["warnings"];
+  };
+
+  const statements =
+    (result as (QueryResult & {
+      statements?: SqlStatementResult[];
+    }) | null)?.statements?.filter(
+      (s) => s.status === "success" && (s.fields?.length ?? 0) > 0
+    ) ?? [];
+
+  const [selection, setSelection] = React.useState<{
+    source: QueryResult | null;
+    index: number;
+  }>({ source: null, index: -1 });
+
+  const selectedIndex =
+    selection.source === result &&
+    selection.index >= 0 &&
+    selection.index < statements.length
+      ? selection.index
+      : statements.length - 1;
+
+  const selectedStatement = statements[selectedIndex];
+
+  const statementResult: QueryResult | null =
+    result && selectedStatement
+      ? {
+          ...result,
+          rows: selectedStatement.rows ?? [],
+          fields: selectedStatement.fields ?? [],
+          rowCount: selectedStatement.rowCount ?? 0,
+          executionTime: selectedStatement.executionTime,
+          columnTypes: selectedStatement.columnTypes,
+          warnings: selectedStatement.warnings,
+          pagination: undefined,
+          vectorColumns: undefined,
+        }
+      : result;
+
+  const displayedResult = hydratedResult ?? statementResult;
+
   /**
    * What an export must be attributed to: the artifact when the run's rows are the
    * ones on screen, null when they are the tab's own. Only the results surface has an
@@ -371,11 +424,13 @@ export const BottomPanel = React.memo(function BottomPanel({
    * the absence out is a different call for the same choice.
    */
   const runResultFormat = (
-    run: (format: ResultExportFormat, hydrated: AgentArtifactHydration | null, csvDelimiter?: CsvDelimiter) => void,
+    run: (format: ResultExportFormat, hydrated: AgentArtifactHydration | null, csvDelimiter?: CsvDelimiter, selected?: { result: QueryResult; query: string }) => void,
     entry: (typeof RESULT_FORMATS)[number],
   ) => {
-    if (entry.csvDelimiter === undefined) run(entry.format, exportArtifact);
-    else run(entry.format, exportArtifact, entry.csvDelimiter);
+    const selected = !hydratedHere && selectedStatement && statementResult
+      ? { result: statementResult, query: selectedStatement.sql }
+      : undefined;
+    run(entry.format, exportArtifact, entry.csvDelimiter, selected);
   };
 
   const tabs: { key: BottomPanelMode; label: string; icon: React.ReactNode; activeClass: string }[] = [
@@ -674,7 +729,31 @@ export const BottomPanel = React.memo(function BottomPanel({
                   them, and a grid with no rows is left out because its "The operation was
                   successful" would contradict the banner. A hydrated result is another run's.
                 */}
+
+                {statements.length > 1 && !hydratedHere && (
+                  <div className="flex shrink-0 gap-1 overflow-x-auto border-b px-2 py-1">
+                    {statements.map((statement, index) => (
+                      <button
+                        key={statement.index}
+                        type="button"
+                        onClick={() => setSelection({ source: result, index })}
+                        title={statement.sql}
+                        className={cn(
+                          "shrink-0 rounded px-3 py-1.5 text-xs font-medium",
+                          selectedIndex === index
+                            ? "bg-accent text-accent-foreground"
+                            : "hover:bg-muted"
+                        )}
+                      >
+                        Result {statement.index + 1}
+                        {" · "}
+                        {statement.rowCount ?? statement.rows?.length ?? 0} rows
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {runError !== undefined && !hydratedHere && (
+
                   <div
                     role="alert"
                     className="shrink-0 px-3 py-2 border-b border-destructive/30 bg-destructive/10 text-destructive"
@@ -693,19 +772,19 @@ export const BottomPanel = React.memo(function BottomPanel({
                   <div className="flex-1 min-h-0">
                     <ResultsGrid
                       result={displayedResult}
-                      onLoadMore={hydratedHere ? undefined : onLoadMore}
+                      onLoadMore={hydratedHere || statements.length > 1 ? undefined : onLoadMore}
                       isLoadingMore={isLoadingMore}
                       supportsResultPagination={metadata?.capabilities.supportsResultPagination}
                       // The statement these ROWS came from, for the ordering notice. Withheld
                       // for a hydrated result for the same reason `onLoadMore` is: those rows
                       // are an agent run's, and the tab's own statement did not produce them.
-                      resultQuery={hydratedHere ? undefined : resultQuery}
+                      resultQuery={hydratedHere ? undefined : selectedStatement?.sql ?? resultQuery}
                       databaseType={activeConnection?.type}
                       maskingEnabled={maskingEnabled}
                       onToggleMasking={onToggleMasking}
                       userRole={userRole}
                       maskingConfig={maskingConfig}
-                      editingEnabled={hydratedHere ? false : editingEnabled}
+                      editingEnabled={hydratedHere || statements.length > 1 ? false : editingEnabled}
                       inlineEditRefusedColumns={metadata?.capabilities.inlineEditRefusedColumns}
                       pendingChanges={pendingChanges}
                       onCellChange={onCellChange}

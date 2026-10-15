@@ -1,5 +1,7 @@
 "use client";
 
+import type { QueryResult } from "@/lib/types";
+
 import type { CsvDelimiter } from "@/lib/export/csv";
 
 import { appFetch } from "@/lib/config/base-path";
@@ -876,8 +878,8 @@ export default function Studio() {
    * be hidden over a hydrated view instead of retargeted.
    */
   const buildExportSource = useCallback(
-    (hydrated: AgentArtifactHydration | null): ResultExportSource | null => {
-      const source = hydrated?.result ?? tabMgr.currentTab.result;
+    (hydrated: AgentArtifactHydration | null, selected?: { result: QueryResult; query: string }): ResultExportSource | null => {
+      const source = hydrated?.result ?? selected?.result ?? tabMgr.currentTab.result;
       if (!source) return null;
       // The columns the engine declared for THIS result. The writers read every row by
       // these names rather than by whatever keys row 0 happens to carry, so a row with
@@ -895,7 +897,7 @@ export default function Studio() {
         tabName: hydrated === null ? tabMgr.currentTab.name : FALLBACK_TABLE_NAME,
         // The statement that fetched the tab's own rows names their table when it reads
         // exactly one (#1386); a run's rows were fetched by no statement of this tab.
-        query: hydrated === null ? tabMgr.currentTab.resultQuery : undefined,
+        query: hydrated !== null ? undefined : selected?.query ?? tabMgr.currentTab.resultQuery,
         dialect: conn.activeConnection?.type,
         // The types the engine declared for THIS result, which is what the DDL form
         // writes when they are there — the only source for a computed column.
@@ -913,8 +915,9 @@ export default function Studio() {
   );
 
   const buildResultFile = useCallback(
-    (format: ResultExportFormat, hydrated: AgentArtifactHydration | null, csvDelimiter?: CsvDelimiter) => {
-      const source = buildExportSource(hydrated);
+    (format: ResultExportFormat, hydrated: AgentArtifactHydration | null,
+     csvDelimiter?: CsvDelimiter, selected?: { result: QueryResult; query: string }) => {
+      const source = buildExportSource(hydrated, selected);
       if (source === null) return null;
       return buildResultExport(format, { ...source, csvDelimiter });
     },
@@ -922,9 +925,10 @@ export default function Studio() {
   );
 
   const exportResults = useCallback(
-    (format: ResultExportFormat, hydrated: AgentArtifactHydration | null = null, csvDelimiter?: CsvDelimiter) => {
+    (format: ResultExportFormat, hydrated: AgentArtifactHydration | null = null,
+     csvDelimiter?: CsvDelimiter, selected?: { result: QueryResult; query: string }) => {
       const fileName = (extension: string) => resultExportFileName(extension, hydrated?.runId);
-      const file = buildResultFile(format, hydrated, csvDelimiter);
+      const file = buildResultFile(format, hydrated, csvDelimiter, selected);
       if (file === null) return;
       downloadText(file.content, file.mimeType, fileName(file.extension));
     },
@@ -949,8 +953,9 @@ export default function Studio() {
    * told, because the alternative is discovering an empty clipboard mid-paste.
    */
   const copyResults = useCallback(
-    (format: ResultExportFormat, hydrated: AgentArtifactHydration | null = null, csvDelimiter?: CsvDelimiter) => {
-      const file = buildResultFile(format, hydrated, csvDelimiter);
+    (format: ResultExportFormat, hydrated: AgentArtifactHydration | null = null,
+     csvDelimiter?: CsvDelimiter, selected?: { result: QueryResult; query: string }) => {
+      const file = buildResultFile(format, hydrated, csvDelimiter, selected);
       if (file === null) return;
       void writeToClipboard(file.content).then((copied) => {
         if (copied) toast({ title: `Copied ${file.extension.toUpperCase()} to clipboard` });

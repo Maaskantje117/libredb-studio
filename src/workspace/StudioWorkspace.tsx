@@ -1,5 +1,7 @@
 "use client";
 
+import type { QueryResult } from "@/lib/types";
+
 import type { CsvDelimiter } from "@/lib/export/csv";
 
 import React, { useState, useEffect, useImperativeHandle, useRef, useMemo, useCallback } from "react";
@@ -346,27 +348,29 @@ export function StudioWorkspace({
   );
 
   // === Export results (shared writers; this shell applies no masking) ===
-  const buildExportSource = useCallback((): ResultExportSource | null => {
-    if (!tabMgr.currentTab.result) return null;
+  const buildExportSource = useCallback((selected?: { result: QueryResult; query: string }): ResultExportSource | null => {
+    const source = selected?.result ?? tabMgr.currentTab.result;
+    if (!source) return null;
     return {
-      rows: tabMgr.currentTab.result.rows,
-      fields: tabMgr.currentTab.result.fields,
+      rows: source.rows,
+      fields: source.fields,
       tabName: tabMgr.currentTab.name,
       // The statement that fetched these rows names their table when it reads exactly one (#1386).
-      query: tabMgr.currentTab.resultQuery,
+      query: selected?.query ?? tabMgr.currentTab.resultQuery,
       // Was missing from this callback's dependencies, so a SQL export written
       // after the host switched connections quoted its literals for whichever
       // engine happened to be active on the first render.
       dialect: conn.activeConnection?.type,
       // The host's own declared column types (`use-query-adapter` carries them),
       // which the DDL form prefers over a type guessed from a value.
-      columnTypes: tabMgr.currentTab.result.columnTypes,
+      columnTypes: source.columnTypes,
     };
   }, [tabMgr.currentTab, conn.activeConnection?.type]);
 
   const buildResultFile = useCallback(
-    (format: ResultExportFormat, csvDelimiter?: CsvDelimiter) => {
-      const source = buildExportSource();
+    (format: ResultExportFormat, csvDelimiter?: CsvDelimiter,
+     selected?: { result: QueryResult; query: string }) => {
+      const source = buildExportSource(selected);
       if (source === null) return null;
       return buildResultExport(format, { ...source, csvDelimiter });
     },
@@ -374,8 +378,9 @@ export function StudioWorkspace({
   );
 
   const exportResults = useCallback(
-    (format: ResultExportFormat, _hydrated?: unknown, csvDelimiter?: CsvDelimiter) => {
-      const file = buildResultFile(format, csvDelimiter);
+    (format: ResultExportFormat, _hydrated?: unknown,
+     csvDelimiter?: CsvDelimiter, selected?: { result: QueryResult; query: string }) => {
+      const file = buildResultFile(format, csvDelimiter, selected);
       if (file === null) return;
       downloadText(file.content, file.mimeType, `query_result_export.${file.extension}`);
     },
@@ -395,8 +400,9 @@ export function StudioWorkspace({
    * are gone the user is told rather than left to find an empty clipboard mid-paste.
    */
   const copyResults = useCallback(
-    (format: ResultExportFormat, _hydrated?: unknown, csvDelimiter?: CsvDelimiter) => {
-      const file = buildResultFile(format, csvDelimiter);
+    (format: ResultExportFormat, _hydrated?: unknown,
+     csvDelimiter?: CsvDelimiter, selected?: { result: QueryResult; query: string }) => {
+      const file = buildResultFile(format, csvDelimiter, selected);
       if (file === null) return;
       void writeToClipboard(file.content).then((copied) => {
         if (copied) toast({ title: `Copied ${file.extension.toUpperCase()} to clipboard` });
